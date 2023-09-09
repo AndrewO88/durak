@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DragDropContext } from 'react-beautiful-dnd';
 import List from './List';
+import { BehaviorSubject } from 'rxjs';
 
 
 const initialData = {
@@ -40,86 +41,87 @@ const initialData = {
 
 
 const Board = () => {
-  const [lists, setLists] = useState(initialData.lists);
+  const [lists, setLists] = useState([]);
   const [droppableId, setDroppableId] = useState(null);
+  const behaviorSubject$ = useMemo(() => new BehaviorSubject(initialData.lists), []);
 
-  const updateCardOrder = (listId, newIndex, oldIndex) => {
-    const updatedLists = lists.map((list) => {
-      if (list.id === listId) {
-        const updatedCards = [...list.cards];
-        const [movedCard] = updatedCards.splice(oldIndex, 1);
-        updatedCards.splice(newIndex, 0, movedCard);
-        return { ...list, cards: updatedCards };
-      }
-      return list;
+
+  useEffect(() => {
+    const subscription = behaviorSubject$.subscribe((data) => {
+      setLists(data);
     });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    setLists(updatedLists);
-  };
 
-  const moveCard = (source, destination) => {
-    const sourceList = lists.find((list) => list.id === source.droppableId);
-    const destinationList = lists.find(
-      (list) => list.id === destination.droppableId,
-    );
+  const updateCardOrder = (source, destination) => behaviorSubject$.next((prevLists) => prevLists.map((list) => {
+    const listId = source.droppableId;
+    const newIndex = destination.index;
+    const oldIndex = source.index;
+    if (list.id !== listId) return list;
+    const updatedCards = [...list.cards];
+    const [movedCard] = updatedCards.splice(oldIndex, 1);
+    updatedCards.splice(newIndex, 0, movedCard);
+    return { ...list, cards: updatedCards };
+  }));
 
-    const sourceCards = [...sourceList.cards];
-    const destinationCards = [...destinationList.cards];
-    const [movedCard] = sourceCards.splice(source.index, 1);
-    destinationCards.splice(destination.index, 0, movedCard);
 
-    const updatedLists = lists.map((list) => {
-      if (list.id === sourceList.id) {
-        return { ...list, cards: sourceCards };
-      } else if (list.id === destinationList.id) {
-        return { ...list, cards: destinationCards };
-      }
-      return list;
-    });
+  const moveCard = (source, destination) => behaviorSubject$.next((prevLists) => prevLists.map((list) => {
+    const { droppableId: sourceListId, index: sourceIndex } = source;
+    const { droppableId: destListId, index: destinationIndex } = destination;
+    if (list.id === sourceListId) {
+      const updatedSourceCards = [...list.cards];
+      const [movedCard] = updatedSourceCards.splice(sourceIndex, 1);
+      const destinationList = prevLists.find((l) => l.id === destListId);
+      const updatedDestCards = [...destinationList.cards];
+      updatedDestCards.splice(destinationIndex, 0, movedCard);
+      return { ...list, cards: updatedSourceCards };
+    } else if (list.id === destListId) {
+      return {
+        ...list,
+        cards: [
+          ...list.cards,
+          prevLists.find((l) => l.id === sourceListId).cards[sourceIndex],
+        ],
+      };
+    }
+    return list;
+  }));
 
-    setLists(updatedLists);
-  };
 
   const handleMoveCardClick = () => {
-    const cardToMove = lists[1].cards[1];
-    const updatedSecondListCards = [...lists[1].cards];
-    updatedSecondListCards.splice(1, 1);
-    const updatedThirdListCards = [...lists[2].cards, cardToMove];
-
-    const updatedLists = lists.map((list, index) => {
-      if (index === 1) {
+    const sourceListIndex = 1;
+    const destinationListIndex = 2;
+    const cardIndex = 1;
+    behaviorSubject$.next((prevLists) => prevLists.map((list, index) => {
+      const cardToMove = prevLists[sourceListIndex].cards[cardIndex];
+      const updatedSecondListCards = prevLists[sourceListIndex].cards.filter(
+        (_, index) => index !== cardIndex,
+      );
+      const updatedThirdListCards = [
+        ...prevLists[destinationListIndex].cards,
+        cardToMove,
+      ];
+      if (index === sourceListIndex) {
         return { ...list, cards: updatedSecondListCards };
-      } else if (index === 2) {
+      } else if (index === destinationListIndex) {
         return { ...list, cards: updatedThirdListCards };
       }
       return list;
-    });
-    
-    setLists(updatedLists);
+    }));
   };
 
-  const onDragEnd = (result) => {
+  const onDragEnd = ({ source, destination }) => {
     setDroppableId(null);
-    if (!result.destination) return;
-
-    if (
-      result.source.droppableId === result.destination.droppableId &&
-      result.source.index === result.destination.index
-    ) {
-      return;
-    }
-
-    if (result.source.droppableId === result.destination.droppableId) {
-      updateCardOrder(result.source.droppableId, result.destination.index, result.source.index);
-    } else {
-      moveCard(result.source, result.destination);
-    }
+    if ((source?.droppableId === destination?.droppableId && source.index === destination.index) || !destination) return;
+    source?.droppableId === destination?.droppableId ? updateCardOrder(source, destination) : moveCard(source, destination);
   };
 
   return (
     <DragDropContext onDragEnd={onDragEnd} onDragStart={(e) => setDroppableId(e.source.droppableId)}>
       <div style={{ display: 'flex' }}>
-        {lists.map((list) => (
+        {lists?.map((list) => (
           <List
             key={list.id}
             listId={list.id}
